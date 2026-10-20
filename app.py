@@ -117,7 +117,12 @@ with st.sidebar:
     # Role Search Parameters
     st.subheader("🎯 Search Target")
     job_query = st.text_input("Target Role / Goal", value="Data Analyst")
-    search_limit = st.slider("Job Openings to Analyze", min_value=1, max_value=10, value=3)
+    region_choice = st.selectbox(
+        "Target Market / Location",
+        ["🇮🇳 India (Local & Hybrid/Remote)", "🌍 Worldwide Remote (Open to India)"],
+        help="India mode queries live openings from Indian job portals (Indeed India, LinkedIn). Worldwide mode checks verified global remote boards."
+    )
+    search_limit = st.slider("Job Openings to Analyze", min_value=1, max_value=8, value=3)
     
     run_btn = st.button("🚀 Run Placement Agent", type="primary", use_container_width=True)
 
@@ -147,12 +152,13 @@ if run_btn:
             status_box.write("📄 Reading and structuring candidate resume...")
             resume_text = agent.read_resume(active_resume_path)
             
-            status_box.write(f"🌐 Fetching live openings for **'{job_query}'** via Remotive API...")
-            jobs = agent.search_jobs(job_query, limit=search_limit)
+            search_region = "India" if "India" in region_choice else "Worldwide Remote"
+            status_box.write(f"🌐 Fetching live openings for **'{job_query}'** ({search_region})...")
+            jobs = agent.search_jobs(job_query, limit=search_limit, region=search_region)
             
             if not jobs:
                 status_box.update(label="No jobs found for query", state="error")
-                st.warning(f"No active job postings found on Remotive for query '{job_query}'. Try broader terms like 'python', 'data', or 'developer'.")
+                st.warning(f"No active job postings found for '{job_query}' in {search_region}. Try broader terms like 'python', 'data', or 'developer'.")
             else:
                 status_box.write(f"🔎 Found {len(jobs)} active job postings. Running deep ATS matching...")
                 

@@ -49,34 +49,104 @@ def clean_html(raw_html: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def search_jobs(query: str, limit: int = 5) -> list:
-    """Fetch live tech jobs from Remotive API."""
-    url = "https://remotive.com/api/remote-jobs"
-    params = {"search": query, "limit": limit}
-    headers = {"User-Agent": "AIPlacementAgent/1.0"}
-    
-    try:
-        response = requests.get(url, params=params, headers=headers, timeout=25)
-        response.raise_for_status()
-        data = response.json()
-        raw_jobs = data.get("jobs", [])
-    except Exception as e:
-        print(f"[!] Warning: Remotive API query failed ({e}). Returning empty job list.")
-        return []
-
+def search_jobs(query: str, limit: int = 5, region: str = "India") -> list:
+    """Fetch live jobs targeting India (via JobSpy / Indeed India) or Worldwide Remote (Remotive/RemoteOK)."""
     jobs = []
-    for j in raw_jobs[:limit]:
-        jobs.append({
-            "id": j.get("id"),
-            "title": j.get("title", "Untitled Role"),
-            "company": j.get("company_name", "Unknown Company"),
-            "url": j.get("url", ""),
-            "category": j.get("category", ""),
-            "job_type": j.get("job_type", ""),
-            "candidate_required_location": j.get("candidate_required_location", "Anywhere"),
-            "description": clean_html(j.get("description", ""))[:4500]
-        })
-    return jobs
+    
+    # Mode 1: Search India-specific Jobs (Naukri/Indeed India/LinkedIn via JobSpy)
+    if "india" in region.lower():
+        try:
+            from jobspy import scrape_jobs
+            print(f"[*] Querying live Indian job boards (Indeed India / LinkedIn) for '{query}'...")
+            df = scrape_jobs(
+                site_name=["indeed", "linkedin"],
+                search_term=query,
+                location="India",
+                results_wanted=limit,
+                country_indeed="india"
+            )
+            if df is not None and not df.empty:
+                for _, row in df.iterrows():
+                    desc = str(row.get("description") or "")
+                    if len(desc.strip()) < 100:
+                        continue
+                    jobs.append({
+                        "id": str(row.get("id", "")),
+                        "title": str(row.get("title", "Role")),
+                        "company": str(row.get("company", "Company")),
+                        "url": str(row.get("job_url", "")),
+                        "category": str(row.get("site", "India Job Board")),
+                        "job_type": str(row.get("job_type", "Full-time")),
+                        "candidate_required_location": str(row.get("location", "India")),
+                        "description": clean_html(desc)[:4500]
+                    })
+                    if len(jobs) >= limit:
+                        break
+        except Exception as e:
+            print(f"[!] Info: JobSpy India search note ({e}). Falling back to global feeds.")
+
+    # Mode 2: Fetch from Remotive / RemoteOK (Strictly filter for Worldwide / India friendly)
+    if len(jobs) < limit:
+        needed = limit - len(jobs)
+        # Check Remotive
+        try:
+            url = "https://remotive.com/api/remote-jobs"
+            params = {"search": query, "limit": 25}
+            headers = {"User-Agent": "AIPlacementAgent/1.0"}
+            response = requests.get(url, params=params, headers=headers, timeout=20)
+            if response.status_code == 200:
+                raw_jobs = response.json().get("jobs", [])
+                for j in raw_jobs:
+                    loc = (j.get("candidate_required_location") or "").lower()
+                    # Filter OUT US-only / Americas-only jobs if looking for India
+                    if any(us_tag in loc for us_tag in ["usa only", "us only", "americas only", "latin america"]):
+                        continue
+                    # Accept Worldwide, Anywhere, India, APAC, or no restriction
+                    if any(ok_tag in loc for ok_tag in ["worldwide", "anywhere", "india", "apac", "global"]) or not loc:
+                        jobs.append({
+                            "id": j.get("id"),
+                            "title": j.get("title", "Untitled Role"),
+                            "company": j.get("company_name", "Unknown Company"),
+                            "url": j.get("url", ""),
+                            "category": j.get("category", "Remote"),
+                            "job_type": j.get("job_type", "Full-time"),
+                            "candidate_required_location": j.get("candidate_required_location", "Worldwide Remote"),
+                            "description": clean_html(j.get("description", ""))[:4500]
+                        })
+                        if len(jobs) >= limit:
+                            break
+        except Exception as e:
+            print(f"[!] Warning: Remotive query failed: {e}")
+
+    # Fallback to RemoteOK if still needed
+    if len(jobs) < limit:
+        try:
+            r = requests.get("https://remoteok.com/api", headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            if r.status_code == 200:
+                r_jobs = r.json()
+                for j in r_jobs[1:]:
+                    pos = str(j.get("position", "")).lower()
+                    desc = str(j.get("description", "")).lower()
+                    loc = str(j.get("location", "")).lower()
+                    if query.lower() in pos or query.lower() in desc:
+                        if "usa only" not in loc and "us only" not in loc:
+                            jobs.append({
+                                "id": j.get("id"),
+                                "title": j.get("position", "Untitled"),
+                                "company": j.get("company", "Company"),
+                                "url": j.get("url", "https://remoteok.com"),
+                                "category": "Remote Tech",
+                                "job_type": "Full-time",
+                                "candidate_required_location": j.get("location") or "Worldwide Remote",
+                                "description": clean_html(j.get("description", ""))[:4500]
+                            })
+                            if len(jobs) >= limit:
+                                break
+        except Exception:
+            pass
+
+    return jobs[:limit]
+
 
 
 import time
@@ -174,12 +244,13 @@ Return ONLY a valid JSON object with the following exact keys:
     return call_llm_json(prompt)
 
 
-def run_placement_pipeline(goal: str = "data analyst", resume_path: str = "resume.pdf", limit: int = 5):
+def run_placement_pipeline(goal: str = "data analyst", resume_path: str = "resume.pdf", limit: int = 5, region: str = "India"):
     """Orchestrate end-to-end placement workflow."""
     print("=" * 65)
     print("🤖 AI PLACEMENT AGENT - AUTONOMOUS JOB MATCHING PIPELINE")
     print("=" * 65)
     print(f"[+] Target Role/Goal : {goal}")
+    print(f"[+] Target Region    : {region}")
     print(f"[+] Candidate Resume : {resume_path}")
     print(f"[+] Job Search Limit : {limit}")
     
@@ -189,8 +260,8 @@ def run_placement_pipeline(goal: str = "data analyst", resume_path: str = "resum
     print(f"  ✓ Resume parsed successfully ({len(resume_text)} characters)")
 
     # 2. Search Live Jobs
-    print(f"\n[Step 2/4] Searching live job openings for '{goal}' via Remotive API...")
-    jobs = search_jobs(goal, limit=limit)
+    print(f"\n[Step 2/4] Searching live job openings for '{goal}' in '{region}'...")
+    jobs = search_jobs(goal, limit=limit, region=region)
     if not jobs:
         print("  ✗ No jobs found for query. Try broader keywords like 'data', 'developer', or 'analyst'.")
         return []
@@ -219,6 +290,7 @@ def run_placement_pipeline(goal: str = "data analyst", resume_path: str = "resum
     with open(report_file, "w", encoding="utf-8") as f:
         f.write(f"# 🎯 AI Placement Intelligence Report\n\n")
         f.write(f"- **Target Goal:** `{goal}`\n")
+        f.write(f"- **Target Region:** `{region}`\n")
         f.write(f"- **Candidate Resume:** `{os.path.basename(resume_path)}`\n")
         f.write(f"- **Jobs Scanned:** {len(results)}\n")
         f.write(f"- **Generated By:** Autonomous AI Placement Agent\n\n")
@@ -249,5 +321,7 @@ if __name__ == "__main__":
     target_goal = sys.argv[1] if len(sys.argv) > 1 else "data analyst"
     target_resume = sys.argv[2] if len(sys.argv) > 2 else "resume.pdf"
     search_limit = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+    target_region = sys.argv[4] if len(sys.argv) > 4 else "India"
     
-    run_placement_pipeline(goal=target_goal, resume_path=target_resume, limit=search_limit)
+    run_placement_pipeline(goal=target_goal, resume_path=target_resume, limit=search_limit, region=target_region)
+
