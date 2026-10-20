@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 from dotenv import load_dotenv
 import agent
+import importlib
+importlib.reload(agent)
 
 # Page Setup
 st.set_page_config(
@@ -154,7 +156,10 @@ if run_btn:
             
             search_region = "India" if "India" in region_choice else "Worldwide Remote"
             status_box.write(f"🌐 Fetching live openings for **'{job_query}'** ({search_region})...")
-            jobs = agent.search_jobs(job_query, limit=search_limit, region=search_region)
+            try:
+                jobs = agent.search_jobs(job_query, limit=search_limit, region=search_region)
+            except TypeError:
+                jobs = agent.search_jobs(job_query, limit=search_limit)
             
             if not jobs:
                 status_box.update(label="No jobs found for query", state="error")

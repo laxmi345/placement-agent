@@ -49,7 +49,7 @@ def clean_html(raw_html: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def search_jobs(query: str, limit: int = 5, region: str = "India") -> list:
+def search_jobs(query: str, limit: int = 5, region: str = "India", **kwargs) -> list:
     """Fetch live jobs targeting India (via JobSpy / Indeed India) or Worldwide Remote (Remotive/RemoteOK)."""
     jobs = []
     
