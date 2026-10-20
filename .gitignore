@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+uploaded_resume.pdf
+.streamlit/
