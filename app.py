@@ -89,7 +89,13 @@ with st.sidebar:
     
     # API Key Handling
     env_key = os.getenv("GEMINI_API_KEY", "")
-    gemini_key = st.text_input("Gemini API Key", value=env_key, type="password", help="Loaded from .env by default")
+    if not env_key:
+        try:
+            if "GEMINI_API_KEY" in st.secrets:
+                env_key = st.secrets["GEMINI_API_KEY"]
+        except Exception:
+            pass
+    gemini_key = st.text_input("Gemini API Key", value=env_key, type="password", help="Loaded from environment or secrets by default")
     if gemini_key:
         agent.GEMINI_API_KEY = gemini_key
         
